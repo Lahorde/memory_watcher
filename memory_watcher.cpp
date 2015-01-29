@@ -83,7 +83,7 @@ void MemoryWatcher::checkRAM(const char * arg_as8_file, unsigned arg_u_line)
 	if(loc_s32_ram < RAM_WARN_LEVEL)
 	{
 		/** put here code to call some error handler or continue execution... */
-		APP_ERROR_HANDLER(NRF_ERROR_NO_MEM);
+		APP_ERROR_HANDLER(FREE_MEM_PATTERN);
 	}
 }
 
@@ -93,7 +93,7 @@ void MemoryWatcher::checkRAMHistory(void)
 	if(loc_s32_minRam < RAM_WARN_LEVEL)
 	{
 		/** put here code to call some error handler or continue execution... */
-		APP_ERROR_HANDLER(NRF_ERROR_NO_MEM);
+		APP_ERROR_HANDLER(FREE_MEM_PATTERN);
 	}
 }
 
