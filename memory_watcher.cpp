@@ -15,7 +15,9 @@
 #include "memory_watcher.h"
 #include "assert.h"
 #include "app_util.h"
+extern "C"{
 #include "app_error.h"
+}
 #include "stdio.h"
 
 /**************************************************************************
