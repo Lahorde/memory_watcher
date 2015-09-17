@@ -13,20 +13,15 @@
  *****************************************************************************/
 
 #include "memory_watcher.h"
-#include "assert.h"
-#include "app_util.h"
-extern "C"{
-#include "app_error.h"
-}
-#include "stdio.h"
+
 
 /**************************************************************************
  * Manifest Constants
  **************************************************************************/
 
-/** Pattern to fill memory - can be defined in startup file
+/** Magic value for testing if the stack has overran the program variables.
  */
-extern const uint32_t FREE_MEM_PATTERN;
+#define STACK_CANARY 0xc5
 
 #ifndef RAM_WARN_LEVEL
 #define RAM_WARN_LEVEL 150
@@ -41,18 +36,15 @@ extern const uint32_t FREE_MEM_PATTERN;
  **************************************************************************/
 
 /** Gain access to linker symbol for base of the stack.
- * This symbol is defined to be the address at the bottom of the stack.
- * Stack/Heap checked according to limits given in startup files
+ * This symbol is defined to be the address at the bootom of the stack.
  */
-/** stack start */
-extern uint32_t __StackTop;
 /** stack end */
-extern uint32_t __StackLimit;
-
-/** Heap base */
-extern uint32_t __HeapBase;
+extern uint8_t __stack;
+/** end of .bss section */
+extern uint8_t __bss_end;
+extern uint8_t __heap_start;
 /** heap end */
-extern uint32_t __HeapLimit;
+extern uint8_t * __brkval;
 /**************************************************************************
  * Macros
  **************************************************************************/
@@ -60,79 +52,114 @@ extern uint32_t __HeapLimit;
 /**************************************************************************
  * Local Functions
  **************************************************************************/
-int32_t MemoryWatcher::getRemainingRAM(void)
-{
-	return getRemainingStack() + getRemainingHeap();
+
+MemoryWatcher::MemoryWatcher() {
+	// TODO Auto-generated constructor stub
+
 }
 
-int32_t MemoryWatcher::getRemainingStack(void)
-{
-	return (uint8_t*)GET_SP() - (uint8_t*)&__StackLimit;
+MemoryWatcher::~MemoryWatcher() {
+	// TODO Auto-generated destructor stub
 }
 
-
-int32_t MemoryWatcher::getRemainingHeap(void)
+long MemoryWatcher::getRemainingRAM(void)
 {
-	/** RP - 28/01/2015 - for now mapped to min remaining heap... */
-	return getMinRemainingHeap();
+	long loc_s32FreeValue;
+	if((int) __brkval == 0)
+		loc_s32FreeValue = ((int)&loc_s32FreeValue) - ((int)&__bss_end);
+	else
+		loc_s32FreeValue = ((int)&loc_s32FreeValue) - ((int)__brkval);
+	return loc_s32FreeValue;
 }
 
-void MemoryWatcher::checkRAM(const char * arg_as8_file, unsigned arg_u_line)
+void MemoryWatcher::checkRAM(const __FlashStringHelper * arg_as8_file, int arg_u16_line)
 {
-	int32_t loc_s32_ram = getRemainingRAM();
-
-	/** only check stack */
-	if(loc_s32_ram < RAM_WARN_LEVEL)
+	long loc_f32_ram = getRemainingRAM();
+	if(loc_f32_ram < RAM_WARN_LEVEL)
 	{
-		/** put here code to call some error handler or continue execution... */
-		APP_ERROR_HANDLER(FREE_MEM_PATTERN);
+		Serial.print(arg_as8_file);
+		Serial.print(F(" - l"));
+		Serial.print(arg_u16_line);
+		Serial.print(F(" - LOW ram level "));
+		Serial.println(loc_f32_ram);
 	}
 }
 
 void MemoryWatcher::checkRAMHistory(void)
 {
-	int32_t loc_s32_minRam = getMinRemainingStack() + getMinRemainingHeap();
-	if(loc_s32_minRam < RAM_WARN_LEVEL)
+	long loc_f32_min_ram = getMinRemainingStackSize();
+	if(loc_f32_min_ram < RAM_WARN_LEVEL)
 	{
-		/** put here code to call some error handler or continue execution... */
-		APP_ERROR_HANDLER(FREE_MEM_PATTERN);
+		Serial.print(F(" LOW ram level reached : "));
+		Serial.println(loc_f32_min_ram);
 	}
 }
 
+/**
+ * Fill stack with a defined pattern.
+ * After you can check maximum occupied space stack
+ * using getMaxStackSize()
+ * Refer : http://www.avrfreaks.net/forum/soft-c-avrgcc-monitoring-stack-usage
+ */
+
+__attribute__ ((naked,section (".init1")))
+void stackPaint(void)
+{
+#if 0
+    uint8_t *p = &_end;
+
+    while(p <= &__stack)
+    {
+        *p = STACK_CANARY;
+        p++;
+    }
+#else
+    __asm volatile ("    ldi r30,lo8(_end)\n"
+                    "    ldi r31,hi8(_end)\n"
+                    "    ldi r24,lo8(0xc5)\n" /* STACK_CANARY = 0xc5 */
+                    "    ldi r25,hi8(__stack)\n"
+                    "    rjmp .cmp\n"
+                    ".loop:\n"
+                    "    st Z+,r24\n"
+                    ".cmp:\n"
+                    "    cpi r30,lo8(__stack)\n"
+                    "    cpc r31,r25\n"
+                    "    brlo .loop\n"
+                    "    breq .loop"::);
+#endif
+}
 
 void MemoryWatcher::paintStackNow(void)
 {
-    uint32_t *p = (uint32_t *) GET_SP();
+    uint8_t *p = (uint8_t*) (__brkval == 0 ? &__heap_start : __brkval);;
 
-    while(p >= &__StackLimit)
+    while(p < (uint8_t*)&p)
     {
-        *p = FREE_MEM_PATTERN;
-        p--;
+        *p = STACK_CANARY;
+        p++;
     }
 }
 
-int32_t MemoryWatcher::getMinRemainingStack(void)
+/** WARNING !!!!!!!!! invalid results when heap decreases - in this case
+ * repaint stack calling paintStackNow()
+ */
+long MemoryWatcher::getMinRemainingStackSize(void)
 {
-    const uint32_t *p = &__StackLimit;
-    uint32_t loc_u32_stackSpace = 0;
+    const uint8_t *p = NULL;
 
-    while(*p == FREE_MEM_PATTERN && p < &__StackTop)
+    if(__brkval == 0){
+    	p = &__bss_end;
+    }
+    else{
+    	p = __brkval;
+    }
+
+    uint32_t c = 0;
+    while(*p == STACK_CANARY && p <= &__stack)
     {
         p++;
-        loc_u32_stackSpace++;
+        c++;
     }
-    return loc_u32_stackSpace*sizeof(*p);
-}
 
-int32_t MemoryWatcher::getMinRemainingHeap(void)
-{
-    const uint32_t *p = &__HeapLimit - 1;
-    uint32_t loc_u32_heapSpace = 0;
-
-    while(*p == FREE_MEM_PATTERN && p >= &__HeapBase)
-    {
-        p--;
-        loc_u32_heapSpace++;
-    }
-    return loc_u32_heapSpace*sizeof(*p);
+    return c;
 }
